@@ -10,18 +10,18 @@ QT_FOR_CONFIG += sqldrivers-private
 
 CONFIG  += c++11 plugin
 
-include($$PWD/sqlite3/sqlite3.pri)
+include($$PWD/src/sqlite3/sqlite3.pri)
 
 target.path = $$[QT_INSTALL_PLUGINS]/sqldrivers/
 INSTALLS += target
 
 HEADERS  += \
-    $$PWD/sqlitecipher_p.h \
-    $$PWD/sqlitecipher_global.h
+    $$PWD/src/sqlitecipher_p.h \
+    $$PWD/src/sqlitecipher_global.h
 SOURCES  += \
-    $$PWD/smain.cpp \
-    $$PWD/sqlitecipher.cpp
-OTHER_FILES += SqliteCipherDriverPlugin.json
+    $$PWD/src/main.cpp \
+    $$PWD/src/sqlitecipher.cpp
+OTHER_FILES += $$PWD/src/SqliteCipherDriverPlugin.json
 
 !system-sqlite:!contains( LIBS, .*sqlite.* ) {
     CONFIG(release, debug|release):DEFINES *= NDEBUG

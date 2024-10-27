@@ -91,4 +91,4 @@ Q_EXPORT_PLUGIN2(qsqlite, SqliteCipherDriverPlugin)
 
 QT_END_NAMESPACE
 
-#include "smain.moc"
+#include "main.moc"
