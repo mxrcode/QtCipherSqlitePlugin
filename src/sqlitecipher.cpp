@@ -93,12 +93,11 @@ extern "C" {
 # include "sqlite3mc_amalgamation.h"
 }
 
-Q_DECLARE_METATYPE(sqlite3*)
-Q_DECLARE_METATYPE(sqlite3_stmt*)
-#if (QT_VERSION >= 0x050000)
 Q_DECLARE_OPAQUE_POINTER(sqlite3*)
+Q_DECLARE_METATYPE(sqlite3*)
+
 Q_DECLARE_OPAQUE_POINTER(sqlite3_stmt*)
-#endif
+Q_DECLARE_METATYPE(sqlite3_stmt*)
 
 #define CHECK_SQLITE_KEY \
     do { \
