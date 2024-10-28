@@ -12,3 +12,7 @@ wxSQLite3 is a C++ wrapper around the public domain SQLite 3.x database and is s
 You could find how to compile this plugin at http://qtciphersqliteplugin.galaxyworld.org.
 
 Please read [Wiki](https://github.com/devbean/QtCipherSqlitePlugin/wiki) for more details.
+
+## Acknowledgments
+
+This project is based on code from the [QtCipherSqlitePlugin](https://github.com/devbean/QtCipherSqlitePlugin) repository by devbean, originally licensed under the [LGPL-2.1](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html). Modifications have been made to adapt the code for our specific use cases.
