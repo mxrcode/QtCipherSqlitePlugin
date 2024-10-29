@@ -8,7 +8,7 @@ android {
 
 QT_FOR_CONFIG += sqldrivers-private
 
-CONFIG  += c++11 plugin
+CONFIG += c++11 plugin
 
 include($$PWD/src/sqlite3/sqlite3.pri)
 
@@ -18,14 +18,21 @@ INSTALLS += target
 HEADERS  += \
     $$PWD/src/sqlitecipher_p.h \
     $$PWD/src/sqlitecipher_global.h
+
 SOURCES  += \
     $$PWD/src/main.cpp \
     $$PWD/src/sqlitecipher.cpp
+
 OTHER_FILES += $$PWD/src/SqliteCipherDriverPlugin.json
 
 !system-sqlite:!contains( LIBS, .*sqlite.* ) {
     CONFIG(release, debug|release):DEFINES *= NDEBUG
-    DEFINES += SQLITE_OMIT_LOAD_EXTENSION SQLITE_OMIT_COMPLETE SQLITE_ENABLE_FTS3 SQLITE_ENABLE_FTS3_PARENTHESIS SQLITE_ENABLE_RTREE SQLITE_USER_AUTHENTICATION
+    DEFINES += SQLITE_OMIT_LOAD_EXTENSION \
+               SQLITE_OMIT_COMPLETE \
+               SQLITE_ENABLE_FTS3 \
+               SQLITE_ENABLE_FTS3_PARENTHESIS \
+               SQLITE_ENABLE_RTREE \
+               SQLITE_USER_AUTHENTICATION
     !contains(CONFIG, largefile):DEFINES += SQLITE_DISABLE_LFS
     winrt: DEFINES += SQLITE_OS_WINRT
     winphone: DEFINES += SQLITE_WIN32_FILEMAPPING_API=1
@@ -38,8 +45,8 @@ OTHER_FILES += $$PWD/src/SqliteCipherDriverPlugin.json
 QT = core core-private sql-private
 
 PLUGIN_CLASS_NAME = SqliteCipherDriverPlugin
-
 PLUGIN_TYPE = sqldrivers
+
 load(qt_plugin)
 
 DEFINES += QT_NO_CAST_TO_ASCII QT_NO_CAST_FROM_ASCII
