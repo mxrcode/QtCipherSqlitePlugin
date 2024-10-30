@@ -37,6 +37,13 @@ android-g++ {
 win32-g++ {
     DEFINES += restrict=__restrict
 }
+unix:!macx {
+    DEFINES += restrict=__restrict__
+}
+
+!defined(restrict) {
+    DEFINES += restrict=
+}
 
 INCLUDEPATH += $$PWD
 DEPENDPATH  += $$PWD

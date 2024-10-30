@@ -6,6 +6,7 @@ android {
     TEMPLATE = lib
 }
 
+QT += core core-private sql sql-private
 QT_FOR_CONFIG += sqldrivers-private
 
 CONFIG += c++11 plugin
@@ -42,12 +43,8 @@ OTHER_FILES += $$PWD/src/SqliteCipherDriverPlugin.json
     QMAKE_CXXFLAGS *= $$QT_CFLAGS_SQLITE
 }
 
-QT = core core-private sql-private
-
 PLUGIN_CLASS_NAME = SqliteCipherDriverPlugin
 PLUGIN_TYPE = sqldrivers
-
-load(qt_plugin)
 
 DEFINES += QT_NO_CAST_TO_ASCII QT_NO_CAST_FROM_ASCII
 
