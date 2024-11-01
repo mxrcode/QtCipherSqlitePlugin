@@ -1,17 +1,17 @@
 QtCipherSqlitePlugin (Support Qt 6.8)
 ====================
 
-A Qt plugin for cipher SQLite which is based on SQLite source and wxSQLite3 in wxWidget.
+A Qt plugin for SQLite encryption for use in the **[TaskGuard](https://github.com/mxrcode/TaskGuard)** project *(Qt 6.8.0, sqlite3mc 1.9.0)*
 
-Qt is a full development framework with tools designed to streamline the creation of applications and user interfaces for desktop, embedded and mobile platforms. You could find more details at https://www.qt.io.
+Based on the SQLite source and wxSQLite3 in wxWidget.
 
-SQLite is a software library that implements a self-contained, serverless, zero-configuration, transactional SQL database engine. SQLite is the most widely deployed SQL database engine in the world. The source code for SQLite is in the public domain. You could find more details at http://www.sqlite.org/.
+Qt is a complete development framework with tools designed to streamline the creation of applications and user interfaces for desktop, embedded and mobile platforms. More details can be found at https://www.qt.io.
 
-wxSQLite3 is a C++ wrapper around the public domain SQLite 3.x database and is specifically designed for use in programs based on the wxWidgets library. wxSQLite3 includes an optional extension for SQLite supporting key based database file encryption using 128 bit AES encryption. You could find more details at http://utelle.github.io/wxsqlite3. wxSQLite3 is released under wxWindows Library Licence.
+SQLite is a software library that implements a self-contained, serverless, zero-configuration, transactional SQL database engine. SQLite is the most widely used SQL database engine in the world. The SQLite source code is in the public domain. More details can be found at http://www.sqlite.org/.
 
-You could find how to compile this plugin at http://qtciphersqliteplugin.galaxyworld.org.
+wxSQLite3 is a C++ wrapper around the public domain SQLite 3.x database and is specifically designed for use in applications based on the wxWidgets library. wxSQLite3 includes an optional extension to SQLite that supports key-based encryption of database files using 128-bit AES encryption. More details can be found at http://utelle.github.io/wxsqlite3. wxSQLite3 is released under the wxWindows Library Licence.
 
-Please read [Wiki](https://github.com/mxrcode/QtCipherSqlitePlugin/wiki/Guide) for more details.
+Please see the [Wiki](https://github.com/mxrcode/QtCipherSqlitePlugin/wiki/Guide) for more details.
 
 ## License
 
