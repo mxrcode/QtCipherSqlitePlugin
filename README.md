@@ -1,4 +1,4 @@
-QtCipherSqlitePlugin
+QtCipherSqlitePlugin (Support Qt 6.8)
 ====================
 
 A Qt plugin for cipher SQLite which is based on SQLite source and wxSQLite3 in wxWidget.
