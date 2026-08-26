@@ -1,7 +1,7 @@
 QtCipherSqlitePlugin (Support Qt 6.8)
 ====================
 
-A Qt plugin for SQLite encryption for use in the **[TaskGuard](https://github.com/mxrcode/TaskGuard)** project *(Qt 6.8.0, sqlite3mc 1.9.0)*
+A Qt plugin for SQLite encryption for use in the **[TaskGuard](https://github.com/mxrcode/TaskGuard)** project *(Qt 6.8.0, sqlite3mc 2.5.0)*
 
 Based on the SQLite source and wxSQLite3 in wxWidget.
 

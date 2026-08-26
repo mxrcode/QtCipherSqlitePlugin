@@ -32,8 +32,7 @@ OTHER_FILES += $$PWD/src/SqliteCipherDriverPlugin.json
                SQLITE_OMIT_COMPLETE \
                SQLITE_ENABLE_FTS3 \
                SQLITE_ENABLE_FTS3_PARENTHESIS \
-               SQLITE_ENABLE_RTREE \
-               SQLITE_USER_AUTHENTICATION
+               SQLITE_ENABLE_RTREE
     !contains(CONFIG, largefile):DEFINES += SQLITE_DISABLE_LFS
     winrt: DEFINES += SQLITE_OS_WINRT
     winphone: DEFINES += SQLITE_WIN32_FILEMAPPING_API=1
