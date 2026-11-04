@@ -40,6 +40,7 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDebug>
+#include <QFileInfo>
 #include <QSqlError>
 #include <QSqlField>
 #include <QSqlIndex>
@@ -57,6 +58,7 @@
 #endif
 
 #include <QScopedValueRollback>
+#include <QUrl>
 #include <QVariant>
 
 #if defined Q_OS_WIN
@@ -98,19 +100,6 @@ Q_DECLARE_METATYPE(sqlite3*)
 
 Q_DECLARE_OPAQUE_POINTER(sqlite3_stmt*)
 Q_DECLARE_METATYPE(sqlite3_stmt*)
-
-// The key length is password.size(), not the UTF-8 byte count. Existing databases with non-ASCII
-// passwords are keyed with these truncated bytes, so changing it locks their owners out.
-#define CHECK_SQLITE_KEY \
-    do { \
-        sqlite3_key(d->access, password.toUtf8().constData(), password.size()); \
-        int result = sqlite3_exec(d->access, QStringLiteral("SELECT count(*) FROM sqlite_master LIMIT 1").toUtf8().constData(), nullptr, nullptr, nullptr); \
-        if (result != SQLITE_OK) { \
-            const QSqlError error = qMakeError(d->access, tr("Invalid password."), QSqlError::ConnectionError, result); \
-            sqlite3_close_v2(d->access); d->access = nullptr; \
-            setLastError(error); setOpenError(true); setOpen(false); return false; \
-        } \
-    } while (0)
 
 QT_BEGIN_NAMESPACE
 
@@ -874,6 +863,56 @@ static QString _cipherValueToName(const QtSqliteCipher &cipher) {
 }
 
 /*
+   The new password in QSQLITE_UPDATE_KEY may contain any character, including
+   spaces and semicolons, so the option must come last and takes the rest of the
+   string verbatim. Returns false if what follows looks like another option: a
+   wrong guess would either lock the database behind an unintended password or
+   remove its encryption.
+*/
+static bool takeUpdateKeyOption(QString &options, bool &found, QString &newPassword)
+{
+    static const QLatin1String optionName("QSQLITE_UPDATE_KEY");
+    static const QLatin1String optionPrefixes[] = {
+        QLatin1String("QSQLITE_"), QLatin1String("AES128CBC_"), QLatin1String("AES256CBC_"),
+        QLatin1String("CHACHA20_"), QLatin1String("SQLCIPHER_"), QLatin1String("RC4_")
+    };
+
+    found = false;
+    for (int start = 0; start < options.size();) {
+        int end = options.indexOf(QLatin1Char(';'), start);
+        if (end < 0)
+            end = options.size();
+        const int equals = options.indexOf(QLatin1Char('='), start);
+        const bool hasValue = equals >= 0 && equals < end;
+        const QString name = options.mid(start, (hasValue ? equals : end) - start);
+        if (name.trimmed() != optionName) {
+            start = end + 1;
+            continue;
+        }
+
+        found = true;
+        newPassword = hasValue ? options.mid(equals + 1) : QString();
+        // "QSQLITE_UPDATE_KEY = value": the spaces are formatting, not part of the password
+        if (name.endsWith(QLatin1Char(' '))) {
+            while (newPassword.startsWith(QLatin1Char(' ')))
+                newPassword.remove(0, 1);
+        }
+        options.truncate(start);
+
+        const QStringList parts = newPassword.split(QLatin1Char(';'));
+        for (int i = 1; i < parts.size(); ++i) {
+            const QString partName = parts.at(i).section(QLatin1Char('='), 0, 0).trimmed();
+            for (const QLatin1String &prefix : optionPrefixes) {
+                if (partName.startsWith(prefix))
+                    return false;
+            }
+        }
+        return true;
+    }
+    return true;
+}
+
+/*
    SQLite dbs have no user name, hosts or ports.
    just file names and password we need.
 */
@@ -928,7 +967,22 @@ bool SQLiteCipherDriver::open(const QString & db, const QString &, const QString
     int regexpCacheSize = 25;
 #endif
 
-    const auto opts = QString(conOpts).remove(QLatin1Char(' ')).split(QLatin1Char(';'));
+    QString otherOptions = conOpts;
+    bool hasUpdateKeyOption = false;
+    if (!takeUpdateKeyOption(otherOptions, hasUpdateKeyOption, newPassword)) {
+        setLastError(QSqlError(tr("QSQLITE_UPDATE_KEY must be the last connection option. The password was not changed."),
+                               QString(), QSqlError::ConnectionError));
+        setOpenError(true);
+        return false;
+    }
+    if (hasUpdateKeyOption && newPassword.isEmpty() && !password.isEmpty()) {
+        setLastError(QSqlError(tr("QSQLITE_UPDATE_KEY needs a new password. Use QSQLITE_REMOVE_KEY to remove the encryption."),
+                               QString(), QSqlError::ConnectionError));
+        setOpenError(true);
+        return false;
+    }
+
+    const auto opts = otherOptions.remove(QLatin1Char(' ')).split(QLatin1Char(';'));
 #if (QT_VERSION >= 0x050700)
     for (auto option : opts) {
 #else
@@ -944,13 +998,6 @@ bool SQLiteCipherDriver::open(const QString & db, const QString &, const QString
                     timeOut = v;
                 }
             }
-        }
-        if (option.startsWith(QLatin1String("QSQLITE_UPDATE_KEY"))) {
-            option = option.mid(18).trimmed();
-            if (option.startsWith(QLatin1Char('='))) {
-                newPassword = option.mid(1);
-            }
-            keyOp = UPDATE_KEY;
         }
         if (option.startsWith(QLatin1String("QSQLITE_USE_CIPHER"))) {
             option = option.mid(18).trimmed();
@@ -1248,6 +1295,10 @@ bool SQLiteCipherDriver::open(const QString & db, const QString &, const QString
 #endif
     }
 
+    // Always the last option in the string, so it overrides any key operation before it
+    if (hasUpdateKeyOption)
+        keyOp = UPDATE_KEY;
+
     int openMode = (openReadOnlyOption ? SQLITE_OPEN_READONLY : (SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE));
     openMode |= (sharedCache ? SQLITE_OPEN_SHAREDCACHE : SQLITE_OPEN_PRIVATECACHE);
     if (openUriOption)
@@ -1255,65 +1306,66 @@ bool SQLiteCipherDriver::open(const QString & db, const QString &, const QString
 
     openMode |= SQLITE_OPEN_NOMUTEX;
 
-    const int openResult = sqlite3_open_v2(db.toUtf8().constData(), &d->access, openMode, nullptr);
-    if (openResult == SQLITE_OK) {
-        sqlite3_busy_timeout(d->access, timeOut);
+    const auto connectToDatabase = [&](sqlite3 *&connection, const char *name, int mode) -> int {
+        const int result = sqlite3_open_v2(name, &connection, mode, nullptr);
+        if (result != SQLITE_OK)
+            return result;
+
+        sqlite3_busy_timeout(connection, timeOut);
 
         // sqlite3mc 2.6.x: accelerated ChaCha20 handles a block counter overflow differently
         // from the scalar code, so a page read back through the other path silently decrypts
         // to wrong data. Stay on the scalar path until the upgrade to 2.7.0.
-        sqlite3_exec(d->access, "PRAGMA mc_chacha20_hwaccel=off", nullptr, nullptr, nullptr);
+        sqlite3_exec(connection, "PRAGMA mc_chacha20_hwaccel=off", nullptr, nullptr, nullptr);
 
-        setOpen(true);
-        setOpenError(false);
 #ifdef REGULAR_EXPRESSION_ENABLED
         if (defineRegexp) {
             auto cache = new QCache<QString, QRegularExpression>(regexpCacheSize);
-            sqlite3_create_function_v2(d->access, "regexp", 2, SQLITE_UTF8, cache, &_q_regexp, nullptr,
+            sqlite3_create_function_v2(connection, "regexp", 2, SQLITE_UTF8, cache, &_q_regexp, nullptr,
                                        nullptr, &_q_regexp_cleanup);
         }
 #endif
         if (cipher > 0) {
-            sqlite3mc_config(d->access, "cipher", cipher);
+            sqlite3mc_config(connection, "cipher", cipher);
             switch (cipher) {
             case AES_128_CBC:
             {
-                sqlite3mc_config_cipher(d->access, "aes128cbc", "legacy", aes128cbcLegacy ? 1 : 0);
-                sqlite3mc_config_cipher(d->access, "aes128cbc", "legacy_page_size", aes128cbcLegacyPageSize);
+                sqlite3mc_config_cipher(connection,"aes128cbc", "legacy", aes128cbcLegacy ? 1 : 0);
+                sqlite3mc_config_cipher(connection,"aes128cbc", "legacy_page_size", aes128cbcLegacyPageSize);
                 break;
             }
             case AES_256_CBC:
             {
-                sqlite3mc_config_cipher(d->access, "aes256cbc", "legacy", aes256cbcLegacy ? 1 : 0);
-                sqlite3mc_config_cipher(d->access, "aes256cbc", "legacy_page_size", aes256cbcLegacyPageSize);
-                sqlite3mc_config_cipher(d->access, "aes256cbc", "kdf_iter", aes256cbcKdfIter);
+                sqlite3mc_config_cipher(connection,"aes256cbc", "legacy", aes256cbcLegacy ? 1 : 0);
+                sqlite3mc_config_cipher(connection,"aes256cbc", "legacy_page_size", aes256cbcLegacyPageSize);
+                sqlite3mc_config_cipher(connection,"aes256cbc", "kdf_iter", aes256cbcKdfIter);
                 break;
             }
             case CHACHA20:
             {
-                sqlite3mc_config_cipher(d->access, "chacha20", "legacy", chacha20Legacy ? 1 : 0);
-                sqlite3mc_config_cipher(d->access, "chacha20", "legacy_page_size", chacha20LegacyPageSize);
-                sqlite3mc_config_cipher(d->access, "chacha20", "kdf_iter", chacha20KdfIter);
+                sqlite3mc_config_cipher(connection,"chacha20", "legacy", chacha20Legacy ? 1 : 0);
+                sqlite3mc_config_cipher(connection,"chacha20", "legacy_page_size", chacha20LegacyPageSize);
+                sqlite3mc_config_cipher(connection,"chacha20", "kdf_iter", chacha20KdfIter);
                 break;
             }
             case SQLCIPHER:
             {
-                sqlite3mc_config_cipher(d->access, "sqlcipher", "legacy", sqlcipherLegacy);
-                sqlite3mc_config_cipher(d->access, "sqlcipher", "legacy_page_size", sqlcipherLegacyPageSize);
-                sqlite3mc_config_cipher(d->access, "sqlcipher", "kdf_iter", sqlcipherKdfIter);
-                sqlite3mc_config_cipher(d->access, "sqlcipher", "fast_kdf_iter", sqlcipherFastKdfIter);
-                sqlite3mc_config_cipher(d->access, "sqlcipher", "hmac_use", sqlcipherHmacUse ? 1 : 0);
-                sqlite3mc_config_cipher(d->access, "sqlcipher", "hmac_pgno", sqlcipherHmacPgno);
-                sqlite3mc_config_cipher(d->access, "sqlcipher", "hmac_salt_mask", sqlcipherHmacSaltMask);
-                sqlite3mc_config_cipher(d->access, "sqlcipher", "kdf_algorithm", sqlcipherKdfAlgorithm);
-                sqlite3mc_config_cipher(d->access, "sqlcipher", "hmac_algorithm", sqlcipherHmacAlgorithm);
-                sqlite3mc_config_cipher(d->access, "sqlcipher", "plaintext_header_size", sqlcipherPlainTextHeaderSize);
+                sqlite3mc_config_cipher(connection,"sqlcipher", "legacy", sqlcipherLegacy);
+                sqlite3mc_config_cipher(connection,"sqlcipher", "legacy_page_size", sqlcipherLegacyPageSize);
+                sqlite3mc_config_cipher(connection,"sqlcipher", "kdf_iter", sqlcipherKdfIter);
+                sqlite3mc_config_cipher(connection,"sqlcipher", "fast_kdf_iter", sqlcipherFastKdfIter);
+                sqlite3mc_config_cipher(connection,"sqlcipher", "hmac_use", sqlcipherHmacUse ? 1 : 0);
+                sqlite3mc_config_cipher(connection,"sqlcipher", "hmac_pgno", sqlcipherHmacPgno);
+                sqlite3mc_config_cipher(connection,"sqlcipher", "hmac_salt_mask", sqlcipherHmacSaltMask);
+                sqlite3mc_config_cipher(connection,"sqlcipher", "kdf_algorithm", sqlcipherKdfAlgorithm);
+                sqlite3mc_config_cipher(connection,"sqlcipher", "hmac_algorithm", sqlcipherHmacAlgorithm);
+                sqlite3mc_config_cipher(connection,"sqlcipher", "plaintext_header_size", sqlcipherPlainTextHeaderSize);
                 break;
             }
             case RC4:
             {
-                sqlite3mc_config_cipher(d->access, "rc4", "legacy", 1);
-                sqlite3mc_config_cipher(d->access, "rc4", "legacy_page_size", rc4LegacyPageSize);
+                sqlite3mc_config_cipher(connection,"rc4", "legacy", 1);
+                sqlite3mc_config_cipher(connection,"rc4", "legacy_page_size", rc4LegacyPageSize);
                 break;
             }
             default:
@@ -1321,45 +1373,126 @@ bool SQLiteCipherDriver::open(const QString & db, const QString &, const QString
                 break;
             }
         }
+        return SQLITE_OK;
+    };
+
+    const auto failOpen = [&](const QString &text, int result) {
+        setLastError(qMakeError(d->access, text, QSqlError::ConnectionError, result));
+        setOpenError(true);
+        setOpen(false);
+        sqlite3_close_v2(d->access);
+        d->access = nullptr;
+        return false;
+    };
+
+    static const char checkSql[] = "SELECT count(*) FROM sqlite_master LIMIT 1";
+
+    // Tries a key without touching the database: immutable makes SQLite ignore the journal and WAL
+    const auto probeKey = [&](const QByteArray &uri, const QByteArray &key, int keyLength) {
+        sqlite3 *probe = nullptr;
+        int result = connectToDatabase(probe, uri.constData(), SQLITE_OPEN_READONLY | SQLITE_OPEN_URI
+                                                               | SQLITE_OPEN_PRIVATECACHE | SQLITE_OPEN_NOMUTEX);
+        if (result == SQLITE_OK) {
+            sqlite3_key(probe, key.constData(), keyLength);
+            result = sqlite3_exec(probe, checkSql, nullptr, nullptr, nullptr);
+        }
+        sqlite3_close_v2(probe);
+        return result;
+    };
+
+    const auto checkKey = [&]() {
+        const QByteArray key = password.toUtf8();
+        // Earlier versions cut the key of a non-ASCII password to password.size() bytes, so
+        // existing databases must keep opening that way. Never rekey with that key: a typo in the
+        // second half of the password passes the check too, and rekeying would then lock the
+        // owner out. Only an explicit QSQLITE_UPDATE_KEY moves a database to the full key.
+        const bool hasLegacyKey = key.size() != password.size();
+        int keyLength = key.size();
+
+        // A wrong key on a database with a hot journal or WAL makes SQLite recover it with that
+        // key, which silently destroys data in ciphers without a MAC. Only let a key that is
+        // known to be right reach the real connection.
+        if (QFileInfo(db + QLatin1String("-journal")).size() > 0 || QFileInfo(db + QLatin1String("-wal")).size() > 0) {
+            const QByteArray uri = QUrl::fromLocalFile(QFileInfo(db).absoluteFilePath()).toEncoded() + "?immutable=1";
+            const int fullResult = probeKey(uri, key, key.size());
+            const int legacyResult = (hasLegacyKey && fullResult != SQLITE_OK) ? probeKey(uri, key, password.size()) : SQLITE_NOTADB;
+            if (fullResult != SQLITE_OK && legacyResult == SQLITE_OK) {
+                keyLength = password.size();
+            } else if (fullResult == SQLITE_NOTADB && legacyResult == SQLITE_NOTADB) {
+                setLastError(QSqlError(tr("Invalid password."), QString::fromUtf8(sqlite3_errstr(SQLITE_NOTADB)),
+                                       QSqlError::ConnectionError, QString::number(SQLITE_NOTADB)));
+                setOpenError(true);
+                setOpen(false);
+                sqlite3_close_v2(d->access);
+                d->access = nullptr;
+                return false;
+            }
+        }
+
+        sqlite3_key(d->access, key.constData(), keyLength);
+        int result = sqlite3_exec(d->access, checkSql, nullptr, nullptr, nullptr);
+        if (result == SQLITE_NOTADB && hasLegacyKey && keyLength == key.size()) {
+            sqlite3_close_v2(d->access);
+            d->access = nullptr;
+            keyLength = password.size();
+            result = connectToDatabase(d->access, db.toUtf8().constData(), openMode);
+            if (result == SQLITE_OK) {
+                sqlite3_key(d->access, key.constData(), keyLength);
+                result = sqlite3_exec(d->access, checkSql, nullptr, nullptr, nullptr);
+            }
+        }
+        if (result != SQLITE_OK)
+            return failOpen(tr("Invalid password."), result);
+        setProperty("legacyKeyInUse", hasLegacyKey && keyLength == password.size());
+        return true;
+    };
+
+    setProperty("legacyKeyInUse", false);
+
+    const int openResult = connectToDatabase(d->access, db.toUtf8().constData(), openMode);
+    if (openResult == SQLITE_OK) {
+        setOpen(true);
+        setOpenError(false);
 
         if (!(password.isNull() || password.isEmpty())) {
             switch (keyOp) {
             case OPEN_WITH_KEY:
             {
-                CHECK_SQLITE_KEY;
+                if (!checkKey())
+                    return false;
                 break;
             }
             case CREATE_KEY:
             {
-                int res = sqlite3_rekey(d->access, password.toUtf8().constData(), password.size());
-                if (SQLITE_OK != res) {
-                    setLastError(qMakeError(d->access, tr("Cannot create password. Maybe it is encrypted?"), QSqlError::ConnectionError, res));
-                    setOpenError(true);
-                    setOpen(false);
-                    sqlite3_close_v2(d->access);
-                    d->access = nullptr;
-                    return false;
-                }
+                const QByteArray key = password.toUtf8();
+                int res = sqlite3_rekey(d->access, key.constData(), key.size());
+                if (SQLITE_OK != res)
+                    return failOpen(tr("Cannot create password. Maybe it is encrypted?"), res);
                 break;
             }
             case UPDATE_KEY:
             {
                 // verify old password
-                CHECK_SQLITE_KEY;
+                if (!checkKey())
+                    return false;
                 // set new password
-                if (newPassword.isEmpty() || newPassword.isNull()) {
-                    sqlite3_rekey(d->access, nullptr, 0);
-                } else {
-                    sqlite3_rekey(d->access, newPassword.toUtf8().constData(), newPassword.size());
-                }
+                const QByteArray key = newPassword.toUtf8();
+                int res = sqlite3_rekey(d->access, key.constData(), key.size());
+                if (SQLITE_OK != res)
+                    return failOpen(tr("Cannot change password."), res);
+                setProperty("legacyKeyInUse", false);
                 break;
             }
             case REMOVE_KEY:
             {
                 // verify old password
-                CHECK_SQLITE_KEY;
+                if (!checkKey())
+                    return false;
                 // set new password to null
-                sqlite3_rekey(d->access, nullptr, 0);
+                int res = sqlite3_rekey(d->access, nullptr, 0);
+                if (SQLITE_OK != res)
+                    return failOpen(tr("Cannot remove password."), res);
+                setProperty("legacyKeyInUse", false);
                 break;
             }
             }

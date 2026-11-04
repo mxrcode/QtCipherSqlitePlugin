@@ -1,4 +1,4 @@
-QtCipherSqlitePlugin (Support Qt 6.8 and 6.12)
+QtCipherSqlitePlugin (Support Qt 6.12)
 ====================
 
 A Qt plugin for SQLite encryption for use in the **[TaskGuard](https://github.com/mxrcode/TaskGuard)** project *(Qt 6.8.0 and 6.12.0, sqlite3mc 2.6.1)*
@@ -12,6 +12,12 @@ SQLite is a software library that implements a self-contained, serverless, zero-
 wxSQLite3 is a C++ wrapper around the public domain SQLite 3.x database and is specifically designed for use in applications based on the wxWidgets library. wxSQLite3 includes an optional extension to SQLite that supports key-based encryption of database files using 128-bit AES encryption. More details can be found at http://utelle.github.io/wxsqlite3. wxSQLite3 is released under the wxWindows Library Licence.
 
 Please see the [Wiki](https://github.com/mxrcode/QtCipherSqlitePlugin/wiki/Guide) for more details.
+
+## Passwords
+
+* `QSQLITE_UPDATE_KEY` must be the last connection option: its value is the rest of the string, verbatim, so the new password may contain spaces and semicolons. If what follows looks like another option, or the new password is empty, `open()` fails and the database is left unchanged. Use `QSQLITE_REMOVE_KEY` to remove the encryption.
+* New databases use the full UTF-8 bytes of the password as the key. Earlier versions cut the key of a non-ASCII password short, which made such databases easier to open with a wrong password. They keep opening, but stay this weak until the password is changed with `QSQLITE_UPDATE_KEY`, even to the same password. They are never rekeyed automatically, because a mistyped password could then lock the owner out. To find them, check `db.driver()->property("legacyKeyInUse")` after opening.
+* A database with a non-ASCII password that was created or rekeyed by this version cannot be opened by earlier versions. ASCII passwords are not affected.
 
 ## License
 
