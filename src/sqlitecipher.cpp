@@ -99,13 +99,16 @@ Q_DECLARE_METATYPE(sqlite3*)
 Q_DECLARE_OPAQUE_POINTER(sqlite3_stmt*)
 Q_DECLARE_METATYPE(sqlite3_stmt*)
 
+// The key length is password.size(), not the UTF-8 byte count. Existing databases with non-ASCII
+// passwords are keyed with these truncated bytes, so changing it locks their owners out.
 #define CHECK_SQLITE_KEY \
     do { \
         sqlite3_key(d->access, password.toUtf8().constData(), password.size()); \
         int result = sqlite3_exec(d->access, QStringLiteral("SELECT count(*) FROM sqlite_master LIMIT 1").toUtf8().constData(), nullptr, nullptr, nullptr); \
         if (result != SQLITE_OK) { \
-            if (d->access) { sqlite3_close(d->access); d->access = nullptr; } \
-            setLastError(qMakeError(d->access, tr("Invalid password."), QSqlError::ConnectionError, result)); setOpenError(true); return false; \
+            const QSqlError error = qMakeError(d->access, tr("Invalid password."), QSqlError::ConnectionError, result); \
+            sqlite3_close_v2(d->access); d->access = nullptr; \
+            setLastError(error); setOpenError(true); setOpen(false); return false; \
         } \
     } while (0)
 
@@ -519,16 +522,22 @@ bool SQLiteResult::execBatch(bool arrayBind)
     Q_UNUSED(arrayBind)
     Q_D(QSqlResult);
     QScopedValueRollback<decltype(d->values)> valuesScope(d->values);
-    QVector<QVariant> values = d->values;
+    const QVector<QVariant> values = d->values;
     if (values.count() == 0)
         return false;
 
-    for (int i = 0; i < values.at(0).toList().count(); ++i) {
+    // Convert each bound column once instead of for every row and placeholder.
+    QVector<QVariantList> columns;
+    columns.reserve(values.count());
+    for (const QVariant &value : values)
+        columns.append(value.toList());
+
+    for (int i = 0; i < columns.at(0).count(); ++i) {
         d->values.clear();
         QScopedValueRollback<decltype(d->indexes)> indexesScope(d->indexes);
         decltype(d->indexes)::const_iterator it = d->indexes.constBegin();
         while (it != d->indexes.constEnd()) {
-            bindValue(it.key(), values.at(it.value().first()).toList().at(i), QSql::In);
+            bindValue(it.key(), columns.at(it.value().first()).at(i), QSql::In);
             ++it;
         }
         if (!exec())
@@ -1250,6 +1259,11 @@ bool SQLiteCipherDriver::open(const QString & db, const QString &, const QString
     if (openResult == SQLITE_OK) {
         sqlite3_busy_timeout(d->access, timeOut);
 
+        // sqlite3mc 2.6.x: accelerated ChaCha20 handles a block counter overflow differently
+        // from the scalar code, so a page read back through the other path silently decrypts
+        // to wrong data. Stay on the scalar path until the upgrade to 2.7.0.
+        sqlite3_exec(d->access, "PRAGMA mc_chacha20_hwaccel=off", nullptr, nullptr, nullptr);
+
         setOpen(true);
         setOpenError(false);
 #ifdef REGULAR_EXPRESSION_ENABLED
@@ -1323,6 +1337,7 @@ bool SQLiteCipherDriver::open(const QString & db, const QString &, const QString
                     setOpenError(true);
                     setOpen(false);
                     sqlite3_close_v2(d->access);
+                    d->access = nullptr;
                     return false;
                 }
                 break;
